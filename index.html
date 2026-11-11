@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+  <title>Day Planner</title>
+  <script>
+    // Apply saved theme before first paint (dark by default).
+    try {
+      var t = localStorage.getItem('dp-theme');
+      document.documentElement.classList.toggle('dark', t !== 'light');
+      if (t === 'light') document.querySelector('meta[name=theme-color]').content = '#f8fafc';
+    } catch (e) {}
+  </script>
+  <style>
+    html{background:#0b1020}html:not(.dark){background:#f8fafc}
+    #boot{position:fixed;inset:0;display:grid;place-items:center;background:#0b1020;color:#94a3b8;font:500 14px system-ui;z-index:99}
+    html:not(.dark) #boot{background:#f8fafc;color:#475569}
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-ink dark:text-slate-100">
+  <div id="boot">Loading…</div>
+  <div id="root"></div>
+  <noscript>Day Planner needs JavaScript.</noscript>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

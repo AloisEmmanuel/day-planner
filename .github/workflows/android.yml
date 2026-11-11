@@ -1,0 +1,82 @@
+name: Build Android APK
+# Wraps the deployed site as an Android app (Trusted Web Activity) and publishes day-planner.apk.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  APP_URL: ${{ vars.APP_URL }}
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+
+      - name: Check APP_URL
+        run: |
+          [ -n "$APP_URL" ] || { echo "Set repository variable APP_URL to your Vercel production URL, e.g. https://day-planner.vercel.app"; exit 1; }
+          curl -fsS "${APP_URL%/}/manifest.webmanifest" > /dev/null
+
+      - name: Install Bubblewrap
+        run: |
+          npm i -g @bubblewrap/cli
+          mkdir -p ~/.bubblewrap
+          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Signing key
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KS_PW: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          PW="${KS_PW:-dayplanner-ci}"
+          if [ -n "$KEYSTORE_B64" ]; then echo "$KEYSTORE_B64" | base64 -d > android.keystore
+          else keytool -genkeypair -keystore android.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass "$PW" -keypass "$PW" -dname "CN=Day Planner"; fi
+          echo "BUBBLEWRAP_KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+          echo "BUBBLEWRAP_KEY_PASSWORD=$PW" >> "$GITHUB_ENV"
+
+      - name: Write twa-manifest.json
+        working-directory: android
+        env:
+          RUN: ${{ github.run_number }}
+        run: |
+          node -e '
+          const u = new URL(process.env.APP_URL.replace(/\/$/, "")), o = u.origin, c = "#0b1020";
+          const m = { packageId: "app.dayplanner.twa", host: u.host, name: "Day Planner", launcherName: "Planner",
+            display: "standalone", orientation: "portrait", themeColor: c, themeColorDark: c, navigationColor: c,
+            navigationColorDark: c, navigationDividerColor: c, navigationDividerColorDark: c, backgroundColor: c,
+            enableNotifications: true, startUrl: "/", iconUrl: o + "/icon-512.png", maskableIconUrl: o + "/icon-512.png",
+            appVersion: process.env.RUN + ".0", appVersionCode: +process.env.RUN,
+            signingKey: { path: "./android.keystore", alias: "android" }, splashScreenFadeOutDuration: 300,
+            fallbackType: "customtabs", features: {}, alphaDependencies: { enabled: false },
+            enableSiteSettingsShortcut: true, isChromeOSOnly: false, isMetaQuest: false, fingerprints: [],
+            additionalTrustedOrigins: [], retainedBundles: [], webManifestUrl: o + "/manifest.webmanifest",
+            generatorApp: "bubblewrap-cli" };
+          require("fs").writeFileSync("twa-manifest.json", JSON.stringify(m, null, 2));'
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          bubblewrap update --skipVersionUpgrade --manifest=./twa-manifest.json
+          bubblewrap build --skipPwaValidation --manifest=./twa-manifest.json
+
+      - name: Fingerprint and assetlinks
+        working-directory: android
+        run: |
+          FP=$(keytool -list -v -keystore android.keystore -alias android -storepass "$BUBBLEWRAP_KEYSTORE_PASSWORD" | grep -m1 'SHA256:' | sed 's/.*SHA256: //')
+          printf '[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"app.dayplanner.twa","sha256_cert_fingerprints":["%s"]}}]\n' "$FP" > assetlinks.json
+          { echo "### Full-screen setup"; echo "Replace public/.well-known/assetlinks.json in the repo with:"; echo '```json'; cat assetlinks.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app-release-signed.apk day-planner.apk
+          gh release delete android-latest -y --cleanup-tag --repo "${{ github.repository }}" || true
+          gh release create android-latest day-planner.apk android/assetlinks.json --repo "${{ github.repository }}" \
+            --title "Android app" --notes "Signed APK, build ${{ github.run_number }}."
